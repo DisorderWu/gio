@@ -336,12 +336,22 @@ func (w *Window) updateAnimation() {
 		return
 	}
 	animate := false
-	if w.hasNextFrame {
-		if dt := time.Until(w.nextFrame); dt <= 0 {
-			animate = true
-		} else {
-			// Schedule redraw.
-			w.scheduleInvalidate(w.nextFrame)
+	// if w.hasNextFrame { 屏蔽掉，解决windows窗口最小化后还可能产生的peekMessage导致消耗大量CPU
+	// 	if dt := time.Until(w.nextFrame); dt <= 0 {
+	// 		animate = true
+	// 	} else {
+	// 		// Schedule redraw.
+	// 		w.scheduleInvalidate(w.nextFrame)
+	// 	}
+	// }
+	if w.decorations.Config.Size.X != 0 && w.decorations.Config.Size.Y != 0 {
+		if w.hasNextFrame {
+			if dt := time.Until(w.nextFrame); dt <= 0 {
+				animate = true
+			} else {
+				// Schedule redraw.
+				w.scheduleInvalidate(w.nextFrame)
+			}
 		}
 	}
 	if animate != w.animating {
