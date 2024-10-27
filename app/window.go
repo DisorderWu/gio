@@ -89,6 +89,9 @@ type Window struct {
 	}
 	imeState editorState
 	driver   driver
+	// gpuErr tracks the GPU error that is to be reported when
+	// the window is closed.
+	gpuErr error
 
 	// invMu protects mayInvalidate.
 	invMu         sync.Mutex
@@ -227,7 +230,8 @@ func (w *Window) processFrame(frame *op.Ops, ack chan<- struct{}) {
 	w.lastFrame.deco.Add(wrapper)
 	if err := w.validateAndProcess(w.lastFrame.size, w.lastFrame.sync, wrapper, ack); err != nil {
 		w.destroyGPU()
-		w.driver.ProcessEvent(DestroyEvent{Err: err})
+		w.gpuErr = err
+		w.driver.Perform(system.ActionClose)
 		return
 	}
 	w.updateState()
@@ -400,6 +404,8 @@ func (c *callbacks) SetDriver(d driver) {
 	if d == nil {
 		panic("nil driver")
 	}
+	c.w.invMu.Lock()
+	defer c.w.invMu.Unlock()
 	c.w.driver = d
 }
 
@@ -647,11 +653,14 @@ func (w *Window) processEvent(e event.Event) bool {
 		e2.Size = e2.Size.Sub(offset)
 		w.coalesced.frame = &e2
 	case DestroyEvent:
+		if w.gpuErr != nil {
+			e2.Err = w.gpuErr
+		}
 		w.destroyGPU()
 		w.invMu.Lock()
 		w.mayInvalidate = false
-		w.invMu.Unlock()
 		w.driver = nil
+		w.invMu.Unlock()
 		if q := w.timer.quit; q != nil {
 			q <- struct{}{}
 			<-q
@@ -666,6 +675,7 @@ func (w *Window) processEvent(e event.Event) bool {
 		}
 		w.coalesced.view = &e2
 	case ConfigEvent:
+		w.decorations.Decorations.Maximized = e2.Config.Mode == Maximized
 		wasFocused := w.decorations.Config.Focused
 		w.decorations.Config = e2.Config
 		e2.Config = w.effectiveConfig()
@@ -728,7 +738,7 @@ func (w *Window) Event() event.Event {
 	if w.driver == nil {
 		e, ok := w.nextEvent()
 		if !ok {
-			panic("window initializion failed without a DestroyEvent")
+			panic("window initialization failed without a DestroyEvent")
 		}
 		return e
 	}
@@ -811,7 +821,6 @@ func (w *Window) decorate(e FrameEvent, o *op.Ops) image.Point {
 	default:
 		panic(fmt.Errorf("unknown WindowMode %v", m))
 	}
-	deco.Perform(actions)
 	gtx := layout.Context{
 		Ops:         o,
 		Now:         e.Now,
